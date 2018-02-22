@@ -1,0 +1,21 @@
+apiVersion: servicecatalog.k8s.io/v1beta1
+kind: ClusterServiceBroker
+metadata:
+  name: efs-broker
+spec:
+  url: http://efs-broker.brokers
+  authInfo:
+    basic:
+      secretRef:
+        namespace: brokers
+        name: efs-broker-auth
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: efs-broker-auth
+  namespace: brokers
+type: Opaque
+data:
+  username: {{ "username" | b64enc }}
+  password: {{ "password" | b64enc }}
