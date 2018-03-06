@@ -5,6 +5,6 @@ COPY . /go/src/efs-broker
 RUN dep ensure -vendor-only
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /efs-broker ./cmd/main.go
 
-FROM alpine
+FROM scratch
 COPY --from=0 /efs-broker .
-ENTRYPOINT /efs-broker
+ENTRYPOINT ["/efs-broker"]

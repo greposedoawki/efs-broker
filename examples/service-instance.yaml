@@ -1,9 +1,13 @@
 apiVersion: servicecatalog.k8s.io/v1beta1
 kind: ServiceInstance
 metadata:
-  name: efs-instance
+  name: efs-instance-parametrized
   namespace: brokers
 spec:
   # References one of the previously returned services
   clusterServiceClassExternalName: efs-broker-name
   clusterServicePlanExternalName: shared-efs
+  parameters:
+    mountTargetSubnets:
+    - id1
+    - id2
