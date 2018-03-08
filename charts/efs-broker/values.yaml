@@ -1,5 +1,5 @@
 # Default values for User-Provided Service Broker
 # Image to use
-image: lukl/efs-broker:0.0.10
+image: lukl/efs-broker:0.0.11
 # ImagePullPolicy; valid values are "IfNotPresent", "Never", and "Always"
 imagePullPolicy: Always

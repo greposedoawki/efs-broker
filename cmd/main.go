@@ -10,7 +10,6 @@ import (
 	"github.com/pivotal-cf/brokerapi"
 	"github.com/spf13/viper"
 	//"k8s.io/api/core/v1"
-	"encoding/json"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -25,6 +24,11 @@ import (
 
 const (
 	efsBrokerCm = "efs-broker-cm"
+)
+
+var (
+	efsConfig *EfsBrokerConfig
+	once sync.Once
 )
 
 type MountTarget struct {
@@ -49,13 +53,36 @@ type EfsConfig struct {
 }
 
 type EfsBrokerConfig struct {
-	FileSystems []EfsConfig `json:"fileSystems"`
+	FileSystems map[string]EfsConfig `json:"fileSystems"`
 }
+
 type efsServiceBroker struct {
 	client     *efs.EFS
 	kubeClient *kubernetes.Clientset
 	logger     lager.Logger
 	lock       sync.Mutex
+	config     *EfsBrokerConfig
+}
+
+func (broker *efsServiceBroker) GetConfig() {
+	once.Do(func() {
+		config, _ := broker.ReadConfig()
+		broker.config = &config
+	})
+	return
+}
+
+func (broker *efsServiceBroker) AddEfs(efsConfig EfsConfig) {
+	broker.lock.Lock()
+	defer broker.lock.Unlock()
+	broker.config.FileSystems[efsConfig.Name] = efsConfig
+	broker.WriteConfig(broker.config)
+}
+
+func (broker *efsServiceBroker) RemoveEfs(efsName string) {
+	broker.lock.Lock()
+	defer broker.lock.Unlock()
+	delete(broker.config.FileSystems, efsName)
 }
 
 func (*efsServiceBroker) plans() map[string]*brokerapi.ServicePlan {
@@ -103,37 +130,22 @@ func (broker *efsServiceBroker) Services(ctx context.Context) []brokerapi.Servic
 
 func (broker *efsServiceBroker) Provision(ctx context.Context, instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (brokerapi.ProvisionedServiceSpec, error) {
 	//panic("implement me")
-	configMaps := broker.kubeClient.CoreV1().ConfigMaps("brokers")
-
-	cm, err := configMaps.Get(efsBrokerCm, meta_v1.GetOptions{})
-	if err != nil {
-		broker.logger.Error("Missing configmap", err)
-		return brokerapi.ProvisionedServiceSpec{}, err
-	}
-
 	broker.logger.Info("Creating new resource", lager.Data{
 		"instanceID": instanceID,
 		"details":    details,
 	})
-	//fs  := cm.Data["fileSystems"]
-	fs := EfsBrokerConfig{}
-	json.Unmarshal([]byte(cm.Data["fileSystems"]), &fs)
-	_, ok := fs[instanceID]
-	if !ok {
-		instance := &EfsBrokerConfig{}
-		fs[instanceID] = instance
+	efsConfig := EfsConfig{
+		CreationToken:   instanceID + "-token",
+		Name:            instanceID,
 	}
+	broker.AddEfs(efsConfig)
 	return brokerapi.ProvisionedServiceSpec{
 		IsAsync: true,
 	}, nil
 }
 
 func (broker *efsServiceBroker) Deprovision(ctx context.Context, instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {
-	configMaps := broker.kubeClient.CoreV1().ConfigMaps("brokers")
-	err := configMaps.Delete("efs-broker-cm", &meta_v1.DeleteOptions{})
-	if err != nil {
-		broker.logger.Error("Failed to delete configmap", err)
-	}
+	broker.RemoveEfs(instanceID)
 	return brokerapi.DeprovisionServiceSpec{}, nil
 }
 
@@ -157,21 +169,21 @@ func (broker *efsServiceBroker) LastOperation(ctx context.Context, instanceID, o
 	}, nil
 }
 
-func (broker *efsServiceBroker) ReadConfig() (EfsConfig, error) {
+func (broker *efsServiceBroker) ReadConfig() (EfsBrokerConfig, error) {
 	configmap := broker.kubeClient.CoreV1().ConfigMaps("brokers")
 	cm, err := configmap.Get(efsBrokerCm, meta_v1.GetOptions{})
 	if err != nil {
-		return EfsConfig{}, err
+		return EfsBrokerConfig{}, err
 	}
-	config := EfsConfig{}
+	config := EfsBrokerConfig{}
 	yaml.Unmarshal([]byte(cm.Data["config"]), &config )
 	return config, nil
 }
 
-func (broker *efsServiceBroker) WriteConfig(config EfsConfig) error {
+func (broker *efsServiceBroker) WriteConfig(config *EfsBrokerConfig) error {
 	broker.lock.Lock()
 	defer broker.lock.Unlock()
-	marshalled, err := yaml.Marshal(&config)
+	marshalled, err := yaml.Marshal(config)
 	if err != nil {
 		return err
 	}
@@ -182,6 +194,7 @@ func (broker *efsServiceBroker) WriteConfig(config EfsConfig) error {
 	}
 	cm.Data["config"] = string(marshalled)
 	configmap.Update(cm)
+	return nil
 }
 
 func InitBroker(logger lager.Logger) (*efsServiceBroker, brokerapi.BrokerCredentials) {
